@@ -1,6 +1,3 @@
-# login_tester_2_etapas.py (v2 - com POST no refresh)
-# Testa o fluxo de autenticação em dois passos: login + refresh.
-
 import requests
 import json
 import os
@@ -9,11 +6,23 @@ import os
 LOGIN_URL = 'https://amei.amorsaude.com.br/api/v1/security/login'
 REFRESH_URL = 'https://amei.amorsaude.com.br/api/v1/security/refresh-token?clinicId=932'
 
-LOGIN_PAYLOAD = {
-    'email': os.getenv('AMEI_USERNAME'),
-    'password': os.getenv('AMEI_PASSWORD'), 
-    'keepConnected': True
-}
+# Tenta carregar as credenciais do arquivo config.json
+try:
+    with open('config.json', 'r', encoding='utf-8') as config_file:
+        config = json.load(config_file)
+        LOGIN_PAYLOAD = {
+            'email': config.get('email'),
+            'password': config.get('password'), 
+            'keepConnected': True
+        }
+except FileNotFoundError:
+    print("ERRO CRÍTICO: O arquivo 'config.json' não foi encontrado.")
+    print("Por favor, crie o arquivo com seu 'email' e 'password'.")
+    exit() # Interrompe a execução se o arquivo de configuração não existir
+except json.JSONDecodeError:
+    print("ERRO CRÍTICO: O arquivo 'config.json' contém um erro de formatação (não é um JSON válido).")
+    exit()
+
 
 def get_auth_new():
     # 2. Início do Teste
@@ -23,6 +32,11 @@ def get_auth_new():
 
     # --- PASSO 1: Login Inicial ---
     try:
+        # Verifica se as credenciais foram carregadas corretamente
+        if not LOGIN_PAYLOAD.get('email') or not LOGIN_PAYLOAD.get('password'):
+            print("\n❌ FALHA NO PASSO 1: Email ou senha não encontrados no arquivo config.json.")
+            exit()
+
         login_response = requests.post(LOGIN_URL, json=LOGIN_PAYLOAD)
         login_response.raise_for_status()
         preliminary_token = login_response.json().get('access_token')
@@ -41,7 +55,6 @@ def get_auth_new():
     preliminary_headers = {'Authorization': f"Bearer {preliminary_token}"}
 
     try:
-        # --- MUDANÇA PRINCIPAL AQUI: de requests.get para requests.post ---
         refresh_response = requests.post(REFRESH_URL, headers=preliminary_headers)
         refresh_response.raise_for_status()
 
@@ -55,12 +68,9 @@ def get_auth_new():
         print("\n✅ SUCESSO NO PASSO 2! Autenticação completa.")
         return final_token
             
-        
-
     except requests.exceptions.RequestException as e:
         print(f"\n❌ FALHA NO PASSO 2: Erro na requisição de refresh.")
         print(f"Detalhes: {e}")
         if 'refresh_response' in locals():
             print(f"Resposta do Servidor: {refresh_response.text}")
-
 
