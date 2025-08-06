@@ -41,7 +41,7 @@ def get_cashback(cpf):
     request_headers['Authorization'] = f"Bearer {auth_token}"
     params = {'matriculaoucpf': cpf}
     
-    print(f"Consultando cashback para o CPF/Matrícula: {cpf}")
+    print(f"Consultando cashback para o CPF: {cpf}")
     
     try:
         response = requests.get(CASHBACK_URL, headers=request_headers, params=params)
@@ -87,7 +87,7 @@ def index():
             else:
                 cashback_data = resultado
         else:
-            error_message = "Por favor, digite um CPF ou matrícula."
+            error_message = "Por favor, digite um CPF."
 
     return render_template('index.html', 
                            cashback_data=cashback_data, 
