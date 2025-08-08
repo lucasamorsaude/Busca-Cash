@@ -34,6 +34,9 @@ CASHBACK_URL = 'https://amei.amorsaude.com.br/api/v1/cartao-todos/cashback'
 # --- 2. FUNÇÃO PARA CONSULTAR O CASHBACK ---
 # (A função get_cashback não precisa de alterações)
 def get_cashback(cpf):
+
+    auth_token = get_auth_new()
+
     if not auth_token:
         return {"erro": "Autenticação inicial falhou. Verifique as credenciais e reinicie o servidor."}
 
