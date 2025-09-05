@@ -1,61 +1,47 @@
 import os
-import re # Importa o módulo de expressões regulares
+import re
 import requests
-from flask import Flask, request, render_template
+import io
+import pandas as pd
+from flask import Flask, request, render_template, send_file
+from werkzeug.utils import secure_filename
 
 from login_auth import get_auth_new
 
-# ... (o resto da configuração inicial não muda) ...
+ALLOWED_EXTENSIONS = {'xls', 'xlsx'}
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 app = Flask(__name__)
-# ... (autenticação e definições de URL não mudam) ...
-# --- 1. CONFIGURAÇÃO DA APLICAÇÃO E AUTENTICAÇÃO ---
 
-# Inicializa o Flask. Ele automaticamente reconhece a pasta 'templates'.
-app = Flask(__name__)
-
-# Realiza a autenticação uma vez quando o app inicia
-print("Iniciando autenticação com a API AmorSaúde...")
-try:
-    auth_token = get_auth_new()
-    print("Autenticação bem-sucedida.")
-except Exception as e:
-    print(f"ERRO CRÍTICO: Falha ao obter o token de autenticação. O app não poderá funcionar. Erro: {e}")
-    auth_token = None
-
-# Headers para as requisições na API
 HEADERS = {
     'Content-Type': 'application/json',
 }
 
-# URL da nova API de Cashback
 CASHBACK_URL = 'https://amei.amorsaude.com.br/api/v1/cartao-todos/cashback'
 
-
-# --- 2. FUNÇÃO PARA CONSULTAR O CASHBACK ---
-# (A função get_cashback não precisa de alterações)
 def get_cashback(cpf):
-
     auth_token = get_auth_new()
-
     if not auth_token:
         return {"erro": "Autenticação inicial falhou. Verifique as credenciais e reinicie o servidor."}
 
-    request_headers = HEADERS.copy()
-    request_headers['Authorization'] = f"Bearer {auth_token}"
+    headers = HEADERS.copy()
+    headers['Authorization'] = f"Bearer {auth_token}"
     params = {'matriculaoucpf': cpf}
-    
+
     print(f"Consultando cashback para o CPF: {cpf}")
-    
+
     try:
-        response = requests.get(CASHBACK_URL, headers=request_headers, params=params)
+        response = requests.get(CASHBACK_URL, headers=headers, params=params)
         response.raise_for_status()
         print(f"Resposta da API (Status {response.status_code}): {response.text}")
-        
+
         if response.text:
             return response.json()
         else:
             return {"info": "A API retornou uma resposta vazia.", "cpf_consultado": cpf}
-            
+
     except requests.exceptions.HTTPError as http_err:
         print(f"Erro HTTP ao buscar cashback: {http_err}")
         print(f"Resposta do servidor: {http_err.response.text}")
@@ -67,37 +53,75 @@ def get_cashback(cpf):
         print("Erro ao decodificar JSON da resposta da API.")
         return {"erro": "A resposta da API não é um JSON válido.", "resposta_recebida": response.text}
 
-
-# --- 3. ROTA DA APLICAÇÃO WEB (INTERFACE) ---
-
 @app.route('/', methods=['GET', 'POST'])
 def index():
     cashback_data = None
     error_message = None
     cpf_digitado = ""
+    tabela_resultado = None
 
     if request.method == 'POST':
-        cpf_sujo = request.form.get('cpf', '') # Pega o valor do formulário
-        cpf_digitado = cpf_sujo
-        
-        if cpf_sujo:
-            # LÓGICA DE LIMPEZA: Remove tudo que não for dígito
-            cpf_limpo = re.sub(r'\D', '', cpf_sujo)
-            
-            resultado = get_cashback(cpf_limpo) # Usa o CPF limpo na consulta
-            if 'erro' in resultado:
-                error_message = f"Falha na consulta: {resultado.get('erro')} - {resultado.get('detalhes', '')}"
+        if 'file' in request.files:
+            file = request.files['file']
+            if file and allowed_file(file.filename):
+                try:
+                    df = pd.read_excel(file)
+                    if 'CPF' not in df.columns:
+                        error_message = "A planilha deve conter a coluna 'CPF'."
+                    else:
+                        df['CPF'] = df['CPF'].astype(str).str.replace(r'\D', '', regex=True).str.zfill(11)
+                        resultados = []
+                        for cpf in df['CPF']:
+                            res = get_cashback(cpf)
+                            saldo = res.get('balanceAvailable') if 'balanceAvailable' in res else None
+                            resultados.append({'CPF': cpf, 'Cashback': saldo})
+                        tabela_resultado = pd.DataFrame(resultados)
+                        # Converte para lista de dicts para o template
+                        tabela_resultado = tabela_resultado.to_dict(orient='records')
+                except Exception as e:
+                    error_message = f"Erro ao processar a planilha: {e}"
             else:
-                cashback_data = resultado
+                error_message = "Arquivo inválido. Por favor, envie um arquivo Excel (.xls ou .xlsx)."
         else:
-            error_message = "Por favor, digite um CPF."
+            cpf_sujo = request.form.get('cpf', '')
+            cpf_digitado = cpf_sujo
+            if cpf_sujo:
+                cpf_limpo = re.sub(r'\D', '', cpf_sujo)
+                resultado = get_cashback(cpf_limpo)
+                if 'erro' in resultado:
+                    error_message = f"Falha na consulta: {resultado.get('erro')} - {resultado.get('detalhes', '')}"
+                else:
+                    cashback_data = resultado
+            else:
+                error_message = "Por favor, digite um CPF."
 
-    return render_template('index.html', 
-                           cashback_data=cashback_data, 
-                           error_message=error_message, 
-                           cpf_digitado=cpf_digitado)
+    return render_template('index.html',
+                           cashback_data=cashback_data,
+                           error_message=error_message,
+                           cpf_digitado=cpf_digitado,
+                           tabela_resultado=tabela_resultado)
 
-# --- 4. EXECUÇÃO DA APLICAÇÃO ---
+
+
+@app.route('/download-result', methods=['POST'])
+def download_result():
+    csv_data = request.form.get('csv_data')
+    if not csv_data:
+        return "Nenhum dado para download.", 400
+    output = io.BytesIO()
+    output.write(csv_data.encode('utf-8'))
+    output.seek(0)
+    return send_file(output, download_name="resultado_cashback.csv", as_attachment=True, mimetype='text/csv')
+
+@app.route('/download-template')
+def download_template():
+    df = pd.DataFrame(columns=['CPF'])
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False)
+    output.seek(0)
+    return send_file(output, download_name="template_cpf.xlsx", as_attachment=True)
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(debug=False, host='0.0.0.0', port=port)
