@@ -21,13 +21,8 @@ HEADERS = {
 
 CASHBACK_URL = 'https://amei.amorsaude.com.br/api/v1/cartao-todos/cashback'
 
-def get_cashback(cpf):
-    auth_token = get_auth_new()
-    if not auth_token:
-        return {"erro": "Autenticação inicial falhou. Verifique as credenciais e reinicie o servidor."}
-
-    headers = HEADERS.copy()
-    headers['Authorization'] = f"Bearer {auth_token}"
+def get_cashback(headers,cpf):
+    
     params = {'matriculaoucpf': cpf}
 
     print(f"Consultando cashback para o CPF: {cpf}")
@@ -55,6 +50,13 @@ def get_cashback(cpf):
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
+    auth_token = get_auth_new()
+    if not auth_token:
+        return {"erro": "Autenticação inicial falhou. Verifique as credenciais e reinicie o servidor."}
+
+    headers = HEADERS.copy()
+    headers['Authorization'] = f"Bearer {auth_token}"
+
     cashback_data = None
     error_message = None
     cpf_digitado = ""
@@ -72,7 +74,7 @@ def index():
                         df['CPF'] = df['CPF'].astype(str).str.replace(r'\D', '', regex=True).str.zfill(11)
                         resultados = []
                         for cpf in df['CPF']:
-                            res = get_cashback(cpf)
+                            res = get_cashback(headers,cpf)
                             saldo = res.get('balanceAvailable') if 'balanceAvailable' in res else None
                             resultados.append({'CPF': cpf, 'Cashback': saldo})
                         tabela_resultado = pd.DataFrame(resultados)
@@ -87,7 +89,7 @@ def index():
             cpf_digitado = cpf_sujo
             if cpf_sujo:
                 cpf_limpo = re.sub(r'\D', '', cpf_sujo)
-                resultado = get_cashback(cpf_limpo)
+                resultado = get_cashback(headers,cpf_limpo)
                 if 'erro' in resultado:
                     error_message = f"Falha na consulta: {resultado.get('erro')} - {resultado.get('detalhes', '')}"
                 else:
